@@ -9,7 +9,8 @@ scattering (`immediate`), fixed opcode bits (`encoding.fixed`), aliases
 (`pseudo_instruction`) and byte order. The source syntax around it is fixed:
 
   label:                 labels; several per line, instruction may follow
-  # ...  ; ...  // ...   comments
+  # ...  ; ...  // ...   comments (a marker that appears in any assembly
+                         template, such as '#' in "ldi #{imm}", is not a comment)
   42 0x2a 0b101 0o52 'a' numbers; expressions use + - * / % << >> & | ^ ~ ( )
   .                      address of the current line
   .org ADDR              move to absolute ADDR (zero-filled; first one sets the image base)
@@ -22,6 +23,12 @@ scattering (`immediate`), fixed opcode bits (`encoding.fixed`), aliases
 
 A pc-relative immediate operand is written as the target address (normally a
 label); the assembler encodes target - address of the instruction.
+
+Variable-length ISAs (instruction_width = "variable") take each instruction's
+size from its format's width. When one mnemonic has forms of different sizes
+(say a 2-byte zero-page and a 3-byte absolute load), the first form whose
+operands fit is used; an operand that refers to a symbol defined later picks
+the largest form.
 """
 import argparse, ast, re, sys, tomllib
 
@@ -166,17 +173,24 @@ def compile_template(template):
 class ISA:
     def __init__(self, d, endian=None):
         isa = d["isa"]
-        if isa.get("instruction_width", "fixed") != "fixed":
-            raise AsmError("variable-length instruction sets are not supported yet")
-        if isa["instruction_bits"] % 8:
+        mode = isa.get("instruction_width", "fixed")
+        if mode not in ("fixed", "variable"):
+            raise AsmError(f"instruction_width must be \"fixed\" or \"variable\", not {mode!r}")
+        self.variable = mode == "variable"
+        if not self.variable and isa["instruction_bits"] % 8:
             raise AsmError("instruction_bits must be a whole number of bytes")
-        self.ibytes = isa["instruction_bits"] // 8
+        self.ibytes = None if self.variable else isa["instruction_bits"] // 8
         self.endian = endian or ("big" if isa.get("endianness") == "big" else "little")
         self.xlen = isa.get("xlen", 32)
-        self.align = isa.get("fetch_alignment", self.ibytes)
+        self.align = isa.get("fetch_alignment", 1 if self.variable else self.ibytes)
         self.reset_pc = isa.get("reset_pc", 0)
-        self.formats = {f["name"]: {fl["name"]: tuple(fl["bits"]) for fl in f["field"]}
-                        for f in d.get("format", [])}
+        self.formats, self.fmt_bytes = {}, {}
+        for f in d.get("format", []):
+            width = f.get("width", isa.get("instruction_bits")) if self.variable else isa["instruction_bits"]
+            if not isinstance(width, int) or width <= 0 or width % 8:
+                raise AsmError(f"format {f['name']}: width must be a whole number of bytes")
+            self.formats[f["name"]] = {fl["name"]: tuple(fl["bits"]) for fl in f["field"]}
+            self.fmt_bytes[f["name"]] = width // 8
         self.imms = {i["name"]: i for i in d.get("immediate", [])}
         self.regs = {}
         for rf in d.get("register_file", []):
@@ -192,6 +206,27 @@ class ISA:
         for p in d.get("pseudo_instruction", []):
             mn, rx = compile_template(p["assembly"])
             self.pseudos.setdefault(mn, []).append((p, rx))
+        templates = [r["assembly"] for r in d.get("instruction", []) + d.get("pseudo_instruction", [])]
+        self.comments = [c for c in ("#", ";", "//") if not any(c in t for t in templates)]
+
+    def size(self, ins):
+        return self.fmt_bytes[ins["format"]]
+
+    def choose_size(self, mnemonic, ops, pc, syms):
+        """Byte size for this instruction, decided in pass 1 when only earlier symbols are known."""
+        cands = [(ins, m) for ins, rx in self.insns[mnemonic] if (m := rx.fullmatch(ops))]
+        sizes = {self.size(ins) for ins, _ in cands}
+        if len(sizes) == 1:
+            return sizes.pop()
+        for ins, m in cands:
+            try:
+                self._encode_one(ins, m, pc, syms)
+                return self.size(ins)
+            except Undefined:
+                return max(sizes)  # refers to a later symbol: leave room for the largest form
+            except AsmError:
+                pass
+        return self.size(cands[0][0])  # nothing fits; pass 2 reports why
 
     def expand(self, mnemonic, ops, depth=0):
         """Resolve pseudo-instructions textually. Returns [(mnemonic, operand_text), ...]."""
@@ -214,11 +249,11 @@ class ISA:
             raise AsmError(f"operands '{ops}' don't fit {' or '.join(repr(f) for f in forms)}")
         raise AsmError(f"unknown instruction '{mnemonic}'")
 
-    def encode(self, mnemonic, ops, pc, syms):
+    def encode(self, mnemonic, ops, pc, syms, size):
         first_error = None
         for ins, rx in self.insns[mnemonic]:
             m = rx.fullmatch(ops)
-            if not m:
+            if not m or self.size(ins) != size:
                 continue
             try:
                 return self._encode_one(ins, m, pc, syms)
@@ -269,12 +304,12 @@ class ISA:
             value &= (1 << bits) - 1
             for part in im["parts"]:
                 put(part["field"], value >> part["dst_lsb"])
-        return word.to_bytes(self.ibytes, self.endian)
+        return word.to_bytes(self.size(ins), self.endian)
 
 
 # --- source parsing -----------------------------------------------------------
 
-def strip_comment(line):
+def strip_comment(line, comments=("#", ";", "//")):
     out, quote, i = [], None, 0
     while i < len(line):
         c = line[i]
@@ -288,7 +323,7 @@ def strip_comment(line):
         elif c in "\"'":
             quote = c
             out.append(c)
-        elif c in "#;" or line.startswith("//", i):
+        elif any(line.startswith(k, i) for k in comments):
             break
         else:
             out.append(c)
@@ -347,7 +382,7 @@ def assemble(isa, source, base=None):
 
     # Pass 1: lay out addresses, define labels, expand pseudo-instructions.
     for lineno, raw in enumerate(source.splitlines(), 1):
-        line = strip_comment(raw)
+        line = strip_comment(raw, isa.comments)
         try:
             while m := _LABEL.match(line):
                 name = m[1]
@@ -426,8 +461,9 @@ def assemble(isa, source, base=None):
                 if addr % isa.align:
                     raise AsmError(f"instruction at {addr:#x} is not {isa.align}-byte aligned (add .align {isa.align})")
                 shown = raw if len(expansion) == 1 and mn == word else f"{mn} {ops}".strip() + f"    ; {line}"
-                items.append(Item(lineno, shown, addr, "insn", (mn, ops), isa.ibytes))
-                addr += isa.ibytes
+                size = isa.choose_size(mn, ops, addr, syms)
+                items.append(Item(lineno, shown, addr, "insn", (mn, ops), size))
+                addr += size
         except AsmError as e:
             errors.append((lineno, f"line {lineno}: {e}\n    {raw.strip()}"))
 
@@ -436,7 +472,7 @@ def assemble(isa, source, base=None):
     for it in items:
         try:
             if it.kind == "insn":
-                out = isa.encode(*it.payload, it.addr, syms)
+                out = isa.encode(*it.payload, it.addr, syms, it.size)
             elif it.kind == "fill":
                 out = bytes([it.payload]) * it.size
             elif it.kind == "bytes":
@@ -460,13 +496,13 @@ def assemble(isa, source, base=None):
     return bytes(image), image_base, items
 
 
-def listing(items, ibytes):
+def listing(items):
     out = []
     for it in items:
         if it.kind == "fill" and it.size > 8:
             out.append(f"{it.addr:08x}  ({it.size} bytes of {it.payload:#04x})")
             continue
-        chunk = ibytes if it.kind == "insn" else 8
+        chunk = it.size if it.kind == "insn" else 8
         for off in range(0, max(len(it.bytes), 1), chunk):
             hexs = it.bytes[off:off + chunk].hex(" ")
             src = it.source.strip() if off == 0 else ""
@@ -498,7 +534,7 @@ def main(argv=None):
     with open(out, "wb") as f:
         f.write(image)
     if a.listing:
-        print(listing(items, isa.ibytes))
+        print(listing(items))
     print(f"wrote {len(image)} bytes to {out} (base {base:#x})", file=sys.stderr)
     return 0
 

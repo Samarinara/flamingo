@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArchTab, FormatsTab, InstructionsTab, RegsTab, type Update } from "@/components/editor"
+import { AssembleTab } from "@/components/assemble"
+import { defaultAsmSettings, exampleFor, isExample, type AsmSettings } from "@/lib/program"
+import { ArchTab, FormatsTab, InstructionsTab, PseudoTab, RegsTab, type Update } from "@/components/editor"
 import { ChecksPanel, TomlPanel } from "@/components/output"
-import { empty, example, isState, syncAll, toml, validate, type IsaState } from "@/lib/isa"
+import { empty, example, example8, isState, syncAll, toml, validate, type IsaState } from "@/lib/isa"
 
 const STORAGE_KEY = "isa-builder-draft"
+const ASM_KEY = "isa-builder-assemble"
 
 function load(): IsaState {
   try {
@@ -19,11 +22,24 @@ function load(): IsaState {
   return example()
 }
 
-type TabId = "arch" | "regs" | "fmts" | "ins"
+function loadAsm(): AsmSettings {
+  try {
+    const d = localStorage.getItem(ASM_KEY)
+    const s: unknown = d ? JSON.parse(d) : null
+    if (s && typeof s === "object") return { ...defaultAsmSettings(), ...(s as Partial<AsmSettings>) }
+  } catch {
+    /* storage blocked or corrupt */
+  }
+  return defaultAsmSettings()
+}
+
+type TabId = "arch" | "regs" | "fmts" | "ins" | "pseudo" | "asm"
 
 export default function App() {
   const [S, setS] = useState<IsaState>(load)
   const [tab, setTab] = useState<TabId>("arch")
+  const [asm, setAsm] = useState<AsmSettings>(loadAsm)
+  const patchAsm = useCallback((p: Partial<AsmSettings>) => setAsm((prev) => ({ ...prev, ...p })), [])
 
   /** Apply a change to a copy of the state, then re-sync instruction fields with their formats. */
   const update: Update = useCallback((fn) => {
@@ -33,6 +49,12 @@ export default function App() {
       return syncAll(d)
     })
   }, [])
+
+  /** Switch to an example ISA, and to its starter program if the source is still a starter program. */
+  const loadExample = (s: IsaState) => {
+    setS(s)
+    setAsm((prev) => (isExample(prev.source) ? { ...prev, source: exampleFor(s.name), fileName: "" } : prev))
+  }
 
   const problems = useMemo(() => validate(S), [S])
   const text = useMemo(() => toml(S), [S])
@@ -45,11 +67,21 @@ export default function App() {
     }
   }, [S])
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(ASM_KEY, JSON.stringify(asm))
+    } catch {
+      /* storage unavailable */
+    }
+  }, [asm])
+
   const tabs: [TabId, string, number | null][] = [
     ["arch", "Architecture", null],
     ["regs", "Registers", S.regfiles.length],
     ["fmts", "Formats", S.formats.length],
     ["ins", "Instructions", S.instructions.length],
+    ["pseudo", "Pseudo", S.pseudos.length],
+    ["asm", "Assemble", null],
   ]
 
   return (
@@ -58,13 +90,16 @@ export default function App() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-balance">ISA Builder</h1>
           <p className="mt-1 max-w-[60ch] text-muted-foreground">
-            Define registers, instruction formats and instructions. The TOML on the right updates as you type and is checked for bit gaps and
-            encoding clashes.
+            Define registers, instruction formats and instructions, then assemble programs for them. The TOML on the right updates as you type
+            and is checked for bit gaps and encoding clashes.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => setS(example())}>
+          <Button variant="outline" onClick={() => loadExample(example())}>
             Load tiny32 example
+          </Button>
+          <Button variant="outline" onClick={() => loadExample(example8())}>
+            Load tiny8 example
           </Button>
           <Button
             variant="outline"
@@ -102,6 +137,12 @@ export default function App() {
               </TabsContent>
               <TabsContent value="ins">
                 <InstructionsTab S={S} update={update} />
+              </TabsContent>
+              <TabsContent value="pseudo">
+                <PseudoTab S={S} update={update} />
+              </TabsContent>
+              <TabsContent value="asm">
+                <AssembleTab builderToml={text} isaName={S.name} problems={problems} settings={asm} onChange={patchAsm} />
               </TabsContent>
             </Tabs>
           </CardContent>

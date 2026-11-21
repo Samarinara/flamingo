@@ -46,6 +46,39 @@ class Encodings(unittest.TestCase):
         self.assertEqual(image, bytes.fromhex("01000000 02000000 00000000 03"))
 
 
+TINY8 = asm.ISA(tomllib.loads((ROOT / "examples/tiny8.toml").read_text()))
+
+
+class EightBit(unittest.TestCase):
+    def test_variable_length_and_form_choice(self):
+        image, base, items = asm.assemble(TINY8, "lda #5\nlda 0x10\nlda 0x1234\nlda later\nhlt\nlater: .byte 9")
+        self.assertEqual(base, 0x200)
+        self.assertEqual([it.size for it in items], [2, 2, 3, 3, 1, 1])
+        self.assertEqual(image, bytes.fromhex("1005 2010 303412 300b02 01 09"))
+
+    def test_hash_is_not_a_comment_when_templates_use_it(self):
+        self.assertNotIn("#", TINY8.comments)
+        image, _, _ = asm.assemble(TINY8, "add #0xff ; semicolons still start comments\nsub #-1")
+        self.assertEqual(image, bytes.fromhex("11ff 12ff"))
+
+    def test_branch_range_and_byte_values(self):
+        with self.assertRaises(asm.AsmError) as cm:
+            asm.assemble(TINY8, "top: .space 200\nbne top")
+        self.assertIn("out of range [-128, 127]", str(cm.exception))
+        with self.assertRaises(asm.AsmError) as cm:
+            asm.assemble(TINY8, "lda #256")
+        self.assertIn("out of range [-128, 255]", str(cm.exception))
+
+    def test_fixed_8_bit_words(self):
+        d = tomllib.loads((ROOT / "examples/tiny8.toml").read_text())
+        d["isa"].update(instruction_width="fixed", instruction_bits=8)
+        d["format"] = [f for f in d["format"] if f["name"] == "N"]
+        d["instruction"] = [i for i in d["instruction"] if i["format"] == "N"]
+        d["immediate"], d["pseudo_instruction"] = [], []
+        image, _, _ = asm.assemble(asm.ISA(d), "nop\nhlt\nret")
+        self.assertEqual(image, bytes.fromhex("000102"))
+
+
 class Errors(unittest.TestCase):
     def check(self, src, needle):
         with self.assertRaises(asm.AsmError) as cm:
