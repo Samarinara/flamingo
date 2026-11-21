@@ -38,9 +38,13 @@ def main(path):
         gaps = [i for i, c in enumerate(cover) if c is None]
         if gaps: E(f"format {fm['name']}: uncovered bits {gaps}")
         formats[fm["name"]] = {"width": fm["width"], "fields": fields}
+    variable = d.get("isa", {}).get("instruction_width") == "variable"
     if "isa" in d and d["isa"].get("instruction_width") == "fixed":
         for n, fm in formats.items():
             if fm["width"] != d["isa"]["instruction_bits"]: E(f"format {n}: width != isa.instruction_bits")
+    if variable:
+        for n, fm in formats.items():
+            if fm["width"] % 8: E(f"format {n}: width {fm['width']} is not a whole number of bytes")
 
     # immediates assemble fully
     imms = {}
@@ -95,18 +99,30 @@ def main(path):
                 hi, lo = fl["bits"]
                 mask |= ((1 << (hi - lo + 1)) - 1) << lo
                 match |= int(fixed[fl["name"]], 2) << lo
-        seen[n] = (match, mask)
+        seen[n] = (match, mask, fm["width"])
+    # Compare encodings from their first byte in memory, so that in a variable-length
+    # ISA a short instruction must differ from the start of every longer one.
+    big = d.get("isa", {}).get("endianness") == "big"
+    widest = max((w for _, _, w in seen.values()), default=0)
+    def aligned(n):
+        match, mask, w = seen[n]
+        shift = widest - w if big else 0
+        return match << shift, mask << shift
     names = list(seen)
     for i, a in enumerate(names):
         for b in names[i + 1:]:
-            (ma, ka), (mb, kb) = seen[a], seen[b]
+            (ma, ka), (mb, kb) = aligned(a), aligned(b)
             if (ma ^ mb) & ka & kb == 0: E(f"encoding overlap: {a} and {b}")
     if len(names) != len(set(i["name"] for i in d["instruction"])): E("duplicate instruction names")
 
+    # what source code types: the first word of each assembly template (several
+    # instructions may share one, e.g. lda_zp and lda_abs are both "lda")
+    mnemonics = {i.get("assembly", i["name"]).split()[0].lower() for i in d.get("instruction", []) if i.get("assembly", i["name"]).split()}
+    mnemonics |= {p["assembly"].split()[0].lower() for p in d.get("pseudo_instruction", []) if p.get("assembly", "").split()}
     for p in d.get("pseudo_instruction", []):
         for line in p["expands_to"]:
-            mn = line.split()[0]
-            if mn not in seen: E(f"pseudo {p['name']}: expands to unknown instruction {mn}")
+            mn = line.split()[0].lower()
+            if mn not in seen and mn not in mnemonics: E(f"pseudo {p['name']}: expands to unknown instruction {mn}")
 
     classes = d.get("timing", {}).get("latency_class", {})
     for ins in d.get("instruction", []):
