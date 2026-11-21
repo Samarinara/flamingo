@@ -23,7 +23,7 @@ function segments(fm: Format, W: number): Seg[] {
       kind: f.hi > cur ? "over" : "field",
       name: f.name,
       range: `[${f.hi}:${f.lo}]`,
-      hue: (idx * 47 + 210) % 360,
+      hue: (idx * 47 + 340) % 360,
     })
     cur = Math.min(cur, f.lo - 1)
   })
@@ -35,14 +35,14 @@ function segments(fm: Format, W: number): Seg[] {
 export function BitBar({ format, width }: { format: Format; width: number }) {
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex h-11 overflow-hidden rounded-md border bg-muted">
+      <div className="flex h-11 overflow-hidden rounded-full border bg-muted">
         {segments(format, width).map((s, i) => (
           <div
             key={i}
             title={`${s.name} ${s.range}`}
-            style={{ flex: `${s.w} 1 0`, background: s.hue != null ? `hsl(${s.hue} 55% var(--seg-l))` : undefined }}
+            style={{ flex: `${s.w} 1 0`, background: s.hue != null ? `hsl(${s.hue} var(--seg-s) var(--seg-l))` : undefined }}
             className={cn(
-              "flex min-w-0 flex-col justify-center overflow-hidden border-r border-card px-1 py-0.5 font-mono text-[11px] leading-tight text-foreground",
+              "flex min-w-0 flex-col justify-center overflow-hidden border-r border-card transition-[flex-grow] duration-200 ease-out px-1 py-0.5 first:pl-3.5 last:border-r-0 last:pr-3.5 font-mono text-[11px] leading-tight text-foreground",
               s.kind === "gap" && "bit-gap text-destructive",
               s.kind === "over" && "outline-2 -outline-offset-2 outline-destructive",
             )}

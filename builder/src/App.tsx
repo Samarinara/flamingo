@@ -56,7 +56,10 @@ export default function App() {
     <div className="mx-auto max-w-7xl px-4 pt-5 pb-10">
       <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-balance">ISA Builder</h1>
+          <h1 className="flex items-center gap-2 text-3xl font-bold tracking-tight text-balance">
+            <span aria-hidden="true">🦩</span>
+            ISA Builder
+          </h1>
           <p className="mt-1 max-w-[60ch] text-muted-foreground">
             Define registers, instruction formats and instructions. The TOML on the right updates as you type and is checked for bit gaps and
             encoding clashes.
@@ -83,7 +86,7 @@ export default function App() {
         <Card size="sm" aria-label="Editor">
           <CardContent>
             <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)} className="gap-4">
-              <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+              <TabsList className="max-w-full justify-start overflow-x-auto">
                 {tabs.map(([id, label, n]) => (
                   <TabsTrigger key={id} value={id} className="flex-none">
                     {label}
