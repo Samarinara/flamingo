@@ -1,5 +1,5 @@
 import { PlusIcon, Trash2Icon, XIcon } from "lucide-react"
-import type { ComponentProps, ReactNode } from "react"
+import { useRef, useState, type ComponentProps, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { BitBar } from "@/components/bit-bar"
 import { Field, NumInput, TextInput } from "@/components/form"
 import { sanitize } from "@/lib/sanitize"
+import { cn } from "@/lib/utils"
 import {
   ENDIANNESS,
   WIDTHS,
@@ -37,26 +38,64 @@ interface TabProps {
 const Hint = ({ children }: { children: ReactNode }) => <p className="text-sm text-muted-foreground">{children}</p>
 const Row = ({ children }: { children: ReactNode }) => <div className="flex flex-wrap gap-3 *:flex-1 *:basis-36">{children}</div>
 
+const COLLAPSE_MS = 200 // keep in step with duration-200 below
+
+/** Removing collapses the card first, so the list closes the gap instead of jumping. */
 function ItemCard({ title, onRemove, children }: { title: string; onRemove: () => void; children: ReactNode }) {
+  const [removing, setRemoving] = useState(false)
+  const remove = () => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return onRemove()
+    setRemoving(true)
+    window.setTimeout(() => {
+      // Lists are keyed by index, so this card is reused for the next item: reset it in the same render.
+      setRemoving(false)
+      onRemove()
+    }, COLLAPSE_MS)
+  }
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="font-mono">{title}</CardTitle>
-        <CardAction>
-          <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={onRemove}>
-            <Trash2Icon /> Remove
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">{children}</CardContent>
-    </Card>
+    <div
+      className={cn(
+        "grid",
+        removing
+          ? "pointer-events-none -mb-4 grid-rows-[0fr] opacity-0 transition-[grid-template-rows,margin,opacity] duration-200 ease-out"
+          : "grid-rows-[1fr]",
+      )}
+    >
+      <div className={cn("min-h-0", removing && "overflow-hidden")}>
+        <Card size="sm">
+          <CardHeader>
+            <CardTitle className="font-mono">{title}</CardTitle>
+            <CardAction>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={remove}
+              >
+                <Trash2Icon /> Remove
+              </Button>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">{children}</CardContent>
+        </Card>
+      </div>
+    </div>
   )
 }
 
-function AddButton({ children, ...props }: ComponentProps<typeof Button>) {
+/** Adds an item, then scrolls just enough to keep the new card and this button on screen. */
+function AddButton({ children, onClick, ...props }: ComponentProps<typeof Button>) {
+  const ref = useRef<HTMLDivElement>(null)
   return (
-    <div>
-      <Button variant="outline" {...props}>
+    <div ref={ref}>
+      <Button
+        variant="outline"
+        {...props}
+        onClick={(e) => {
+          onClick?.(e)
+          requestAnimationFrame(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }))
+        }}
+      >
         <PlusIcon /> {children}
       </Button>
     </div>
