@@ -7,9 +7,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    /* Motion: a long, soft ease-out for most things and a gentle overshoot for playful bits. */
-    --ease-fluid: cubic-bezier(0.22, 1, 0.36, 1);
-    --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+    /* Quick start, gentle settle. Used for every transition in the app. */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
     --font-heading: var(--font-sans);
     --font-sans: 'Comfortaa Variable', ui-rounded, sans-serif;
     --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
@@ -159,21 +158,13 @@
     }
   html {
     @apply font-sans;
-    -webkit-font-smoothing: antialiased;
-    }
-  ::selection {
-    background: color-mix(in oklab, var(--primary) 35%, transparent);
     }
 }
 
-/* Honour the OS "reduce motion" setting: keep state changes, drop the movement. */
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
     animation-duration: 1ms !important;
-    animation-delay: 0ms !important;
-    animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
-    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 }

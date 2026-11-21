@@ -43,20 +43,16 @@ export function TomlPanel({ text, problems }: { text: string; problems: Problems
       <CardHeader className="border-b pb-3">
         <CardTitle className="font-mono">isa.toml</CardTitle>
         <CardAction className="flex items-center gap-2">
-          <Badge key={`e${errors.length}`} variant="outline" className={cn("animate-in zoom-in-75 duration-300 ease-spring", errors.length ? "border-destructive/50 text-destructive" : "border-ok/50 text-ok")}>
+          <Badge variant="outline" className={errors.length ? "border-destructive/50 text-destructive" : "border-ok/50 text-ok"}>
             {plural(errors.length, "error")}
           </Badge>
           {warnings.length > 0 && (
-            <Badge key={`w${warnings.length}`} variant="outline" className="animate-in border-warn/50 text-warn zoom-in-75 duration-300 ease-spring">
+            <Badge variant="outline" className="border-warn/50 text-warn">
               {plural(warnings.length, "warning")}
             </Badge>
           )}
           <Button size="sm" onClick={copy}>
-            {label === "ok" ? (
-              <CheckIcon key="ok" className="animate-in zoom-in-50 -spin-in-45 duration-300 ease-spring" />
-            ) : (
-              <CopyIcon key="copy" className="animate-in zoom-in-75 fade-in-0 duration-300 ease-spring" />
-            )}
+            {label === "ok" ? <CheckIcon /> : <CopyIcon />}
             {label === "ok" ? "Copied" : label === "fail" ? "Select the text and copy" : "Copy TOML"}
           </Button>
         </CardAction>
@@ -81,17 +77,12 @@ export function ChecksPanel({ problems }: { problems: Problems }) {
         <ul className="flex max-h-[26vh] flex-col gap-1.5 overflow-auto text-sm">
           {items.length ? (
             items.map(({ m, kind }, i) => (
-              <li
-                key={i}
-                className={cn(
-                  "animate-in rounded-2xl px-3 py-1 fade-in-0 slide-in-from-left-2 duration-300 ease-fluid", kind === "error" ? "bg-destructive/10 text-destructive" : "bg-warn/12 text-foreground",
-                )}
-              >
+              <li key={i} className={cn("rounded-2xl px-3 py-1", kind === "error" ? "bg-destructive/10 text-destructive" : "bg-warn/12 text-foreground")}>
                 {m}
               </li>
             ))
           ) : (
-            <li className="animate-in rounded-2xl bg-ok/12 px-3 py-1 text-muted-foreground fade-in-0 zoom-in-95 duration-500 ease-spring">Formats cover every bit and no two encodings overlap.</li>
+            <li className="rounded-2xl bg-ok/12 px-3 py-1 text-muted-foreground">Formats cover every bit and no two encodings overlap.</li>
           )}
         </ul>
       </CardContent>

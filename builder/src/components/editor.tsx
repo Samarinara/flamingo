@@ -1,5 +1,5 @@
 import { PlusIcon, Trash2Icon, XIcon } from "lucide-react"
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react"
+import { useRef, useState, type ComponentProps, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -20,67 +20,41 @@ interface TabProps {
 const Hint = ({ children }: { children: ReactNode }) => <p className="text-sm text-muted-foreground">{children}</p>
 const Row = ({ children }: { children: ReactNode }) => <div className="flex flex-wrap gap-3 *:flex-1 *:basis-36">{children}</div>
 
-/** When the tab mounted, so cards can tell "shown with the tab" from "just added". */
-function useBorn() {
-  const [t] = useState(() => performance.now())
-  return t
-}
+const COLLAPSE_MS = 200 // keep in step with duration-200 below
 
-interface ItemCardProps {
-  title: string
-  onRemove: () => void
-  /** Position in the list, used to stagger the entrance. */
-  index: number
-  born: number
-  children: ReactNode
-}
-
-/**
- * A removable card. It rises in when it appears (staggered when the tab opens) and
- * folds away before it is actually removed.
- */
-function ItemCard({ title, onRemove, index, born, children }: ItemCardProps) {
-  const [added] = useState(() => performance.now() - born > 600)
-  const [entered, setEntered] = useState(false)
-  const [leaving, setLeaving] = useState(false)
-  const pending = useRef<number | null>(null)
-
-  useEffect(() => () => window.clearTimeout(pending.current ?? undefined), [])
-
-  const finish = () => {
-    if (pending.current === null) return
-    window.clearTimeout(pending.current)
-    pending.current = null
-    // The list is keyed by index, so this card now shows the next item: snap back without a transition.
-    setLeaving(false)
-    onRemove()
-  }
+/** Removing collapses the card first, so the list closes the gap instead of jumping. */
+function ItemCard({ title, onRemove, children }: { title: string; onRemove: () => void; children: ReactNode }) {
+  const [removing, setRemoving] = useState(false)
   const remove = () => {
-    if (pending.current !== null) return
-    setLeaving(true)
-    pending.current = window.setTimeout(finish, 600) // in case transitionend never fires
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return onRemove()
+    setRemoving(true)
+    window.setTimeout(() => {
+      // Lists are keyed by index, so this card is reused for the next item: reset it in the same render.
+      setRemoving(false)
+      onRemove()
+    }, COLLAPSE_MS)
   }
-
   return (
     <div
-      style={entered || added ? undefined : { animationDelay: `${Math.min(index, 4) * 60}ms` }}
-      onAnimationEnd={(e) => e.target === e.currentTarget && setEntered(true)}
-      onTransitionEnd={(e) => e.target === e.currentTarget && e.propertyName === "grid-template-rows" && finish()}
       className={cn(
         "grid",
-        !entered && "animate-in fill-mode-both fade-in-0 zoom-in-[0.98] slide-in-from-bottom-3 duration-500 ease-fluid",
-        leaving
-          ? "pointer-events-none -mb-4 grid-rows-[0fr] scale-[0.97] opacity-0 transition-[grid-template-rows,margin,opacity,scale] duration-300 ease-fluid"
+        removing
+          ? "pointer-events-none -mb-4 grid-rows-[0fr] opacity-0 transition-[grid-template-rows,margin,opacity] duration-200 ease-out"
           : "grid-rows-[1fr]",
       )}
     >
-      <div className={cn("min-h-0", leaving && "overflow-hidden")}>
+      <div className={cn("min-h-0", removing && "overflow-hidden")}>
         <Card size="sm">
           <CardHeader>
             <CardTitle className="font-mono">{title}</CardTitle>
             <CardAction>
-              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={remove}>
-                <Trash2Icon className="group-hover/button:-rotate-12" /> Remove
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={remove}
+              >
+                <Trash2Icon /> Remove
               </Button>
             </CardAction>
           </CardHeader>
@@ -91,7 +65,7 @@ function ItemCard({ title, onRemove, index, born, children }: ItemCardProps) {
   )
 }
 
-/** Adds an item, then glides the page so the new card and this button stay in view. */
+/** Adds an item, then scrolls just enough to keep the new card and this button on screen. */
 function AddButton({ children, onClick, ...props }: ComponentProps<typeof Button>) {
   const ref = useRef<HTMLDivElement>(null)
   return (
@@ -104,7 +78,7 @@ function AddButton({ children, onClick, ...props }: ComponentProps<typeof Button
           requestAnimationFrame(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }))
         }}
       >
-        <PlusIcon className="group-hover/button:rotate-90" /> {children}
+        <PlusIcon /> {children}
       </Button>
     </div>
   )
@@ -182,11 +156,10 @@ export function ArchTab({ S, update }: TabProps) {
 /* ---------- Registers ---------- */
 
 export function RegsTab({ S, update }: TabProps) {
-  const born = useBorn()
   return (
     <div className="flex flex-col gap-4">
       {S.regfiles.map((r, i) => (
-        <ItemCard key={i} index={i} born={born} title={r.name || "register file"} onRemove={() => update((d) => void d.regfiles.splice(i, 1))}>
+        <ItemCard key={i} title={r.name || "register file"} onRemove={() => update((d) => void d.regfiles.splice(i, 1))}>
           <Row>
             <Field label="Name">
               {(id) => (
@@ -218,15 +191,12 @@ export function RegsTab({ S, update }: TabProps) {
 
 export function FormatsTab({ S, update }: TabProps) {
   const W = S.width
-  const born = useBorn()
   return (
     <div className="flex flex-col gap-4">
       {!S.formats.length && <Hint>A format splits the {W}-bit instruction word into named fields. Add one to begin.</Hint>}
       {S.formats.map((fm, i) => (
         <ItemCard
           key={i}
-          index={i}
-          born={born}
           title={`Format ${fm.name}`}
           onRemove={() =>
             update((d) => {
@@ -272,7 +242,7 @@ export function FormatsTab({ S, update }: TabProps) {
             </TableHeader>
             <TableBody>
               {fm.fields.map((f, j) => (
-                <TableRow key={j} className="animate-in fade-in-0 slide-in-from-top-1 duration-300 ease-fluid">
+                <TableRow key={j}>
                   <TableCell>
                     <TextInput
                       aria-label="Field name"
@@ -351,7 +321,6 @@ export function FormatsTab({ S, update }: TabProps) {
 /* ---------- Instructions ---------- */
 
 export function InstructionsTab({ S, update }: TabProps) {
-  const born = useBorn()
   return (
     <div className="flex flex-col gap-4">
       {!S.formats.length && <Hint>Define a format first, then instructions can use it.</Hint>}
@@ -359,7 +328,7 @@ export function InstructionsTab({ S, update }: TabProps) {
         const fm = fmtOf(S, it.format)
         const fields = fm ? sortedFields(fm) : []
         return (
-          <ItemCard key={i} index={i} born={born} title={it.name || "instruction"} onRemove={() => update((d) => void d.instructions.splice(i, 1))}>
+          <ItemCard key={i} title={it.name || "instruction"} onRemove={() => update((d) => void d.instructions.splice(i, 1))}>
             <Row>
               <Field label="Mnemonic">
                 {(id) => (
@@ -415,7 +384,7 @@ export function InstructionsTab({ S, update }: TabProps) {
                     const w = num(f.hi) - num(f.lo) + 1
                     const cw = Math.min(Math.max(w, 1), 32)
                     return (
-                      <TableRow key={f.name} className="animate-in fade-in-0 slide-in-from-top-1 duration-300 ease-fluid">
+                      <TableRow key={f.name}>
                         <TableCell className="font-mono">{f.name}</TableCell>
                         <TableCell className="font-mono text-muted-foreground">
                           [{num(f.hi)}:{num(f.lo)}]

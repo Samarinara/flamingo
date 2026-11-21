@@ -42,7 +42,7 @@ export function BitBar({ format, width }: { format: Format; width: number }) {
             title={`${s.name} ${s.range}`}
             style={{ flex: `${s.w} 1 0`, background: s.hue != null ? `hsl(${s.hue} var(--seg-s) var(--seg-l))` : undefined }}
             className={cn(
-              "flex min-w-0 flex-col justify-center overflow-hidden border-r border-card transition-[flex-grow,background-color] duration-500 ease-fluid px-1 py-0.5 first:pl-3.5 last:border-r-0 last:pr-3.5 font-mono text-[11px] leading-tight text-foreground",
+              "flex min-w-0 flex-col justify-center overflow-hidden border-r border-card transition-[flex-grow] duration-200 ease-out px-1 py-0.5 first:pl-3.5 last:border-r-0 last:pr-3.5 font-mono text-[11px] leading-tight text-foreground",
               s.kind === "gap" && "bit-gap text-destructive",
               s.kind === "over" && "outline-2 -outline-offset-2 outline-destructive",
             )}
