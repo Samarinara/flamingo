@@ -1,0 +1,708 @@
+# =============================================================================
+# ISA DESCRIPTION TEMPLATE (TOML)  --  schema_version 0.1
+# =============================================================================
+# One file = single source of truth for an instruction set architecture.
+# Intended consumers (generators): assembler/disassembler tables, decoder RTL,
+# instruction-set simulator, ISA manual tables, compiler backend tables,
+# verification coverage points.
+#
+# Design lessons borrowed from existing work:
+#   * RISC-V Unified DB : instructions / extensions / CSRs as separate typed
+#                         records, versioned schema, one source -> many outputs.
+#   * Sail              : encoding + assembly syntax + semantics live together
+#                         per instruction, and semantics are executable.
+#   * VADL / ArchC / nML: ISA (what software sees) is kept apart from
+#                         microarchitecture (how it is built); this file keeps
+#                         the microarchitecture to non-normative [timing] hints.
+#
+# Conventions
+#   * Bit ranges are [msb, lsb] inclusive; bit 0 is the least significant bit.
+#   * Binary literals are strings such as "0110011" (width = string length).
+#   * Names are lowercase snake_case and are the cross-reference keys.
+#   * "semantics" is pseudocode in the language named in [semantics].
+#   * Sections marked (REQUIRED) must exist; the rest are optional.
+#
+# The content below is a worked example: "tiny32", a small RISC-style 32-bit
+# ISA. Replace the values; keep the structure.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# [meta]  (REQUIRED)  Identity and provenance of this spec
+# -----------------------------------------------------------------------------
+[meta]
+schema_version = "0.1"
+name           = "tiny32"
+version        = "0.1.0"
+status         = "draft"            # draft | review | frozen | ratified
+description    = "Example 32-bit load/store ISA used to illustrate the schema."
+authors        = ["Your Name <you@example.com>"]
+license        = "Apache-2.0"
+changelog      = [
+  { version = "0.1.0", date = "2026-11-21", note = "Initial draft." },
+]
+
+
+# -----------------------------------------------------------------------------
+# [isa]  (REQUIRED)  Global architectural parameters
+# -----------------------------------------------------------------------------
+[isa]
+xlen              = 32              # native integer register width, bits
+endianness        = "little"        # little | big | bi
+instruction_width = "fixed"         # fixed | variable
+instruction_bits  = 32              # for fixed; for variable list allowed widths in [isa.encoding_lengths]
+fetch_alignment   = 4               # bytes
+reset_pc          = 0x0000_0000
+address_bits      = 32
+signed_repr       = "twos_complement"
+execution_model   = "in_order_visible"   # architecturally visible ordering model
+
+# Variable-length ISAs: uncomment and describe how length is determined.
+# [isa.encoding_lengths]
+# rules = [
+#   { bits = 16, when = "inst[1:0] != 0b11" },
+#   { bits = 32, when = "inst[1:0] == 0b11" },
+# ]
+
+
+# -----------------------------------------------------------------------------
+# [semantics]  (REQUIRED)  Language used in every `semantics = "..."` string
+# -----------------------------------------------------------------------------
+[semantics]
+language = "isa-pseudo-v0"          # name of the DSL your tools understand
+# Built-in primitives the semantics language may call. Declaring them lets a
+# validator catch typos and lets each generator map them to its target.
+primitives = [
+  "X[r]",                  # read/write integer register file
+  "pc",                    # program counter
+  "mem_read(addr, bytes)", # load, little/big endian per [isa]
+  "mem_write(addr, bytes, value)",
+  "sext(value, from_bits)",
+  "zext(value, from_bits)",
+  "trap(cause)",
+  "csr[name]",
+]
+
+
+# -----------------------------------------------------------------------------
+# [[extension]]  Modular units of the ISA (base + optional extensions)
+# -----------------------------------------------------------------------------
+[[extension]]
+name        = "base"
+long_name   = "Base integer instructions"
+version     = "1.0"
+mandatory   = true
+depends_on  = []
+description = "Integer ALU, load/store, branch, jump."
+
+[[extension]]
+name        = "mul"
+long_name   = "Integer multiply/divide"
+version     = "0.1"
+mandatory   = false
+depends_on  = ["base"]
+conflicts   = []                    # extensions that cannot co-exist
+description = "Optional multiply extension."
+
+
+# -----------------------------------------------------------------------------
+# Architectural state
+# -----------------------------------------------------------------------------
+
+# --- Register files ----------------------------------------------------------
+[[register_file]]
+name          = "X"
+count         = 32
+width         = 32                  # bits
+index_bits    = 5
+zero_register = 0                   # index hard-wired to zero (omit if none)
+reset_value   = 0
+description   = "General-purpose integer registers."
+# ABI names, index-ordered. Optional but used by assembler/disassembler.
+names         = ["x0","x1","x2","x3","x4","x5","x6","x7",
+                 "x8","x9","x10","x11","x12","x13","x14","x15",
+                 "x16","x17","x18","x19","x20","x21","x22","x23",
+                 "x24","x25","x26","x27","x28","x29","x30","x31"]
+abi_names     = ["zero","ra","sp","gp","tp","t0","t1","t2",
+                 "s0","s1","a0","a1","a2","a3","a4","a5",
+                 "a6","a7","s2","s3","s4","s5","s6","s7",
+                 "s8","s9","s10","s11","t3","t4","t5","t6"]
+
+# Add [[register_file]] entries for FP, vector, predicate registers, etc.
+
+# --- Single registers (pc, flags, ...) ---------------------------------------
+[[register]]
+name         = "pc"
+width        = 32
+reset_value  = 0
+software_writable = false           # changed only by control-flow instructions
+description  = "Program counter."
+
+# --- Control / status registers ---------------------------------------------
+[[csr]]
+name        = "mtvec"
+address     = 0x305
+width       = 32
+privilege   = "machine"
+access      = "rw"                  # ro | rw | w1c | ...
+reset_value = 0
+description = "Trap vector base address."
+  [[csr.field]]
+  name   = "base"
+  bits   = [31, 2]
+  access = "rw"
+  description = "4-byte aligned handler address."
+  [[csr.field]]
+  name   = "mode"
+  bits   = [1, 0]
+  access = "rw"
+  legal_values = [0, 1]             # 0 = direct, 1 = vectored
+  description = "Trap dispatch mode."
+
+[[csr]]
+name        = "mepc"
+address     = 0x341
+width       = 32
+privilege   = "machine"
+access      = "rw"
+reset_value = 0
+description = "PC of the instruction that trapped."
+
+[[csr]]
+name        = "mcause"
+address     = 0x342
+width       = 32
+privilege   = "machine"
+access      = "rw"
+reset_value = 0
+description = "Trap cause code."
+
+
+# --- Memory ------------------------------------------------------------------
+[memory]
+address_space_bits = 32
+byte_addressable   = true
+misaligned_access  = "trap"         # trap | supported | implementation_defined
+memory_model       = "sequential_consistency"   # or "weak", "tso", ...
+atomicity_bytes    = 4
+
+[[memory.region]]
+name       = "boot_rom"
+base       = 0x0000_0000
+size       = 0x0001_0000
+attributes = ["r", "x"]             # r w x, cacheable, io, ...
+
+[[memory.region]]
+name       = "ram"
+base       = 0x8000_0000
+size       = 0x1000_0000
+attributes = ["r", "w", "x", "cacheable"]
+
+
+# --- Privilege modes ---------------------------------------------------------
+[[privilege_mode]]
+name  = "machine"
+level = 3
+
+[[privilege_mode]]
+name  = "user"
+level = 0
+
+
+# -----------------------------------------------------------------------------
+# Encoding: formats -> fields -> immediates
+# -----------------------------------------------------------------------------
+# A [[format]] partitions the instruction word into named fields. Fields must
+# tile the full instruction width with no gaps or overlaps (validator checks).
+
+[[format]]
+name  = "R"
+width = 32
+description = "Register-register."
+  [[format.field]]
+  name = "funct7"
+  bits = [31, 25]
+  [[format.field]]
+  name = "rs2"
+  bits = [24, 20]
+  [[format.field]]
+  name = "rs1"
+  bits = [19, 15]
+  [[format.field]]
+  name = "funct3"
+  bits = [14, 12]
+  [[format.field]]
+  name = "rd"
+  bits = [11, 7]
+  [[format.field]]
+  name = "opcode"
+  bits = [6, 0]
+
+[[format]]
+name  = "I"
+width = 32
+description = "Register-immediate, loads, jalr."
+  [[format.field]]
+  name = "imm12"
+  bits = [31, 20]
+  [[format.field]]
+  name = "rs1"
+  bits = [19, 15]
+  [[format.field]]
+  name = "funct3"
+  bits = [14, 12]
+  [[format.field]]
+  name = "rd"
+  bits = [11, 7]
+  [[format.field]]
+  name = "opcode"
+  bits = [6, 0]
+
+[[format]]
+name  = "S"
+width = 32
+description = "Stores."
+  [[format.field]]
+  name = "imm_hi"
+  bits = [31, 25]
+  [[format.field]]
+  name = "rs2"
+  bits = [24, 20]
+  [[format.field]]
+  name = "rs1"
+  bits = [19, 15]
+  [[format.field]]
+  name = "funct3"
+  bits = [14, 12]
+  [[format.field]]
+  name = "imm_lo"
+  bits = [11, 7]
+  [[format.field]]
+  name = "opcode"
+  bits = [6, 0]
+
+[[format]]
+name  = "B"
+width = 32
+description = "Conditional branches."
+  [[format.field]]
+  name = "imm_b12"
+  bits = [31, 31]
+  [[format.field]]
+  name = "imm_b10_5"
+  bits = [30, 25]
+  [[format.field]]
+  name = "rs2"
+  bits = [24, 20]
+  [[format.field]]
+  name = "rs1"
+  bits = [19, 15]
+  [[format.field]]
+  name = "funct3"
+  bits = [14, 12]
+  [[format.field]]
+  name = "imm_b4_1"
+  bits = [11, 8]
+  [[format.field]]
+  name = "imm_b11"
+  bits = [7, 7]
+  [[format.field]]
+  name = "opcode"
+  bits = [6, 0]
+
+[[format]]
+name  = "U"
+width = 32
+description = "Upper immediate."
+  [[format.field]]
+  name = "imm20"
+  bits = [31, 12]
+  [[format.field]]
+  name = "rd"
+  bits = [11, 7]
+  [[format.field]]
+  name = "opcode"
+  bits = [6, 0]
+
+[[format]]
+name  = "J"
+width = 32
+description = "Unconditional jump."
+  [[format.field]]
+  name = "imm_j20"
+  bits = [31, 31]
+  [[format.field]]
+  name = "imm_j10_1"
+  bits = [30, 21]
+  [[format.field]]
+  name = "imm_j11"
+  bits = [20, 20]
+  [[format.field]]
+  name = "imm_j19_12"
+  bits = [19, 12]
+  [[format.field]]
+  name = "rd"
+  bits = [11, 7]
+  [[format.field]]
+  name = "opcode"
+  bits = [6, 0]
+
+
+# --- Immediates: how scattered encoding fields assemble into a value ---------
+# `parts` places each encoded field at `dst_lsb` of the assembled immediate.
+# `implicit_zero_bits` low bits are always 0 (not encoded).
+[[immediate]]
+name = "imm_i"
+format = "I"
+bits = 12
+signed = true
+parts = [ { field = "imm12", dst_lsb = 0 } ]
+
+[[immediate]]
+name = "imm_s"
+format = "S"
+bits = 12
+signed = true
+parts = [ { field = "imm_lo", dst_lsb = 0 }, { field = "imm_hi", dst_lsb = 5 } ]
+
+[[immediate]]
+name = "imm_b"
+format = "B"
+bits = 13
+signed = true
+implicit_zero_bits = 1
+parts = [
+  { field = "imm_b4_1",  dst_lsb = 1  },
+  { field = "imm_b10_5", dst_lsb = 5  },
+  { field = "imm_b11",   dst_lsb = 11 },
+  { field = "imm_b12",   dst_lsb = 12 },
+]
+
+[[immediate]]
+name = "imm_u"
+format = "U"
+bits = 32
+signed = false
+implicit_zero_bits = 12
+parts = [ { field = "imm20", dst_lsb = 12 } ]
+
+[[immediate]]
+name = "imm_j"
+format = "J"
+bits = 21
+signed = true
+implicit_zero_bits = 1
+parts = [
+  { field = "imm_j10_1",  dst_lsb = 1  },
+  { field = "imm_j11",    dst_lsb = 11 },
+  { field = "imm_j19_12", dst_lsb = 12 },
+  { field = "imm_j20",    dst_lsb = 20 },
+]
+
+
+# -----------------------------------------------------------------------------
+# [[instruction]]  One record per instruction  (REQUIRED, one or more)
+# -----------------------------------------------------------------------------
+# Keys:
+#   name         mnemonic (lowercase)
+#   extension    must match an [[extension]].name
+#   format       must match a [[format]].name
+#   class        alu | shift | load | store | branch | jump | system | ...
+#   encoding.fixed   field -> binary string; every non-operand field must be
+#                    fixed, and values must fit the field width.
+#   operands     name, kind (reg|imm), and for reg: file + access (r|w|rw);
+#                names reference format fields or [[immediate]] names.
+#   assembly     syntax template; {operand} is replaced when assembling
+#   semantics    executable pseudocode, see [semantics]
+#   traps        causes that may be raised (must match [[exception]].name)
+#   flags        free-form tags: reads_mem, writes_mem, branch, privileged ...
+#   timing       non-normative hints for micro-architects (see [timing])
+
+[[instruction]]
+name      = "add"
+long_name = "Add"
+extension = "base"
+format    = "R"
+class     = "alu"
+encoding.fixed = { opcode = "0110011", funct3 = "000", funct7 = "0000000" }
+operands  = [
+  { name = "rd",  kind = "reg", file = "X", access = "w" },
+  { name = "rs1", kind = "reg", file = "X", access = "r" },
+  { name = "rs2", kind = "reg", file = "X", access = "r" },
+]
+assembly  = "add {rd}, {rs1}, {rs2}"
+semantics = "X[rd] = X[rs1] + X[rs2]"
+flags     = []
+traps     = []
+timing    = { latency_class = "alu1", throughput = 1 }
+
+[[instruction]]
+name      = "sub"
+long_name = "Subtract"
+extension = "base"
+format    = "R"
+class     = "alu"
+encoding.fixed = { opcode = "0110011", funct3 = "000", funct7 = "0100000" }
+operands  = [
+  { name = "rd",  kind = "reg", file = "X", access = "w" },
+  { name = "rs1", kind = "reg", file = "X", access = "r" },
+  { name = "rs2", kind = "reg", file = "X", access = "r" },
+]
+assembly  = "sub {rd}, {rs1}, {rs2}"
+semantics = "X[rd] = X[rs1] - X[rs2]"
+timing    = { latency_class = "alu1", throughput = 1 }
+
+[[instruction]]
+name      = "and"
+long_name = "Bitwise AND"
+extension = "base"
+format    = "R"
+class     = "alu"
+encoding.fixed = { opcode = "0110011", funct3 = "111", funct7 = "0000000" }
+operands  = [
+  { name = "rd",  kind = "reg", file = "X", access = "w" },
+  { name = "rs1", kind = "reg", file = "X", access = "r" },
+  { name = "rs2", kind = "reg", file = "X", access = "r" },
+]
+assembly  = "and {rd}, {rs1}, {rs2}"
+semantics = "X[rd] = X[rs1] & X[rs2]"
+timing    = { latency_class = "alu1", throughput = 1 }
+
+[[instruction]]
+name      = "mul"
+long_name = "Multiply (low word)"
+extension = "mul"
+format    = "R"
+class     = "alu"
+encoding.fixed = { opcode = "0110011", funct3 = "000", funct7 = "0000001" }
+operands  = [
+  { name = "rd",  kind = "reg", file = "X", access = "w" },
+  { name = "rs1", kind = "reg", file = "X", access = "r" },
+  { name = "rs2", kind = "reg", file = "X", access = "r" },
+]
+assembly  = "mul {rd}, {rs1}, {rs2}"
+semantics = "X[rd] = (X[rs1] * X[rs2])[31:0]"
+timing    = { latency_class = "mul", throughput = 1 }
+
+[[instruction]]
+name      = "addi"
+long_name = "Add immediate"
+extension = "base"
+format    = "I"
+class     = "alu"
+encoding.fixed = { opcode = "0010011", funct3 = "000" }
+operands  = [
+  { name = "rd",    kind = "reg", file = "X", access = "w" },
+  { name = "rs1",   kind = "reg", file = "X", access = "r" },
+  { name = "imm_i", kind = "imm" },
+]
+assembly  = "addi {rd}, {rs1}, {imm_i}"
+semantics = "X[rd] = X[rs1] + sext(imm_i, 12)"
+timing    = { latency_class = "alu1", throughput = 1 }
+
+[[instruction]]
+name      = "lw"
+long_name = "Load word"
+extension = "base"
+format    = "I"
+class     = "load"
+encoding.fixed = { opcode = "0000011", funct3 = "010" }
+operands  = [
+  { name = "rd",    kind = "reg", file = "X", access = "w" },
+  { name = "rs1",   kind = "reg", file = "X", access = "r" },
+  { name = "imm_i", kind = "imm" },
+]
+assembly  = "lw {rd}, {imm_i}({rs1})"
+semantics = """
+addr = X[rs1] + sext(imm_i, 12)
+if addr % 4 != 0: trap(load_misaligned)
+X[rd] = mem_read(addr, 4)
+"""
+flags     = ["reads_mem"]
+traps     = ["load_misaligned", "load_access_fault"]
+timing    = { latency_class = "load", throughput = 1 }
+
+[[instruction]]
+name      = "sw"
+long_name = "Store word"
+extension = "base"
+format    = "S"
+class     = "store"
+encoding.fixed = { opcode = "0100011", funct3 = "010" }
+operands  = [
+  { name = "rs1",   kind = "reg", file = "X", access = "r" },
+  { name = "rs2",   kind = "reg", file = "X", access = "r" },
+  { name = "imm_s", kind = "imm" },
+]
+assembly  = "sw {rs2}, {imm_s}({rs1})"
+semantics = """
+addr = X[rs1] + sext(imm_s, 12)
+if addr % 4 != 0: trap(store_misaligned)
+mem_write(addr, 4, X[rs2])
+"""
+flags     = ["writes_mem"]
+traps     = ["store_misaligned", "store_access_fault"]
+timing    = { latency_class = "store", throughput = 1 }
+
+[[instruction]]
+name      = "beq"
+long_name = "Branch if equal"
+extension = "base"
+format    = "B"
+class     = "branch"
+encoding.fixed = { opcode = "1100011", funct3 = "000" }
+operands  = [
+  { name = "rs1",   kind = "reg", file = "X", access = "r" },
+  { name = "rs2",   kind = "reg", file = "X", access = "r" },
+  { name = "imm_b", kind = "imm", pc_relative = true },
+]
+assembly  = "beq {rs1}, {rs2}, {imm_b}"
+semantics = "if X[rs1] == X[rs2]: pc = pc + sext(imm_b, 13)"
+flags     = ["branch", "conditional"]
+timing    = { latency_class = "branch", throughput = 1 }
+
+[[instruction]]
+name      = "lui"
+long_name = "Load upper immediate"
+extension = "base"
+format    = "U"
+class     = "alu"
+encoding.fixed = { opcode = "0110111" }
+operands  = [
+  { name = "rd",    kind = "reg", file = "X", access = "w" },
+  { name = "imm_u", kind = "imm" },
+]
+assembly  = "lui {rd}, {imm_u}"
+semantics = "X[rd] = imm_u"
+timing    = { latency_class = "alu1", throughput = 1 }
+
+[[instruction]]
+name      = "jal"
+long_name = "Jump and link"
+extension = "base"
+format    = "J"
+class     = "jump"
+encoding.fixed = { opcode = "1101111" }
+operands  = [
+  { name = "rd",    kind = "reg", file = "X", access = "w" },
+  { name = "imm_j", kind = "imm", pc_relative = true },
+]
+assembly  = "jal {rd}, {imm_j}"
+semantics = """
+X[rd] = pc + 4
+pc = pc + sext(imm_j, 21)
+"""
+flags     = ["branch", "unconditional", "link"]
+timing    = { latency_class = "branch", throughput = 1 }
+
+
+# -----------------------------------------------------------------------------
+# [[pseudo_instruction]]  Assembler-only aliases expanding to real instructions
+# -----------------------------------------------------------------------------
+[[pseudo_instruction]]
+name      = "nop"
+assembly  = "nop"
+expands_to = ["addi x0, x0, 0"]
+
+[[pseudo_instruction]]
+name      = "mv"
+assembly  = "mv {rd}, {rs}"
+expands_to = ["addi {rd}, {rs}, 0"]
+
+[[pseudo_instruction]]
+name      = "j"
+assembly  = "j {offset}"
+expands_to = ["jal x0, {offset}"]
+
+
+# -----------------------------------------------------------------------------
+# [[exception]]  Synchronous traps and interrupts
+# -----------------------------------------------------------------------------
+[[exception]]
+name        = "load_misaligned"
+code        = 4
+kind        = "synchronous"
+description = "Load address not naturally aligned."
+
+[[exception]]
+name        = "load_access_fault"
+code        = 5
+kind        = "synchronous"
+description = "Load to unmapped or protected region."
+
+[[exception]]
+name        = "store_misaligned"
+code        = 6
+kind        = "synchronous"
+description = "Store address not naturally aligned."
+
+[[exception]]
+name        = "store_access_fault"
+code        = 7
+kind        = "synchronous"
+description = "Store to unmapped or protected region."
+
+[trap_entry]
+saves        = ["mepc", "mcause"]
+target_csr   = "mtvec"
+description  = "On trap: mepc = pc; mcause = code; pc = mtvec.base << 2."
+
+
+# -----------------------------------------------------------------------------
+# [abi]  Software conventions (consumed by compiler backend and docs)
+# -----------------------------------------------------------------------------
+[abi]
+name            = "ilp32"
+int_bits        = 32
+long_bits       = 32
+pointer_bits    = 32
+stack_alignment = 16
+stack_pointer   = "sp"
+link_register   = "ra"
+frame_pointer   = "s0"
+argument_regs   = ["a0","a1","a2","a3","a4","a5","a6","a7"]
+return_regs     = ["a0","a1"]
+caller_saved    = ["ra","t0","t1","t2","a0","a1","a2","a3","a4","a5","a6","a7","t3","t4","t5","t6"]
+callee_saved    = ["sp","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11"]
+
+
+# -----------------------------------------------------------------------------
+# [timing]  NON-NORMATIVE microarchitecture hints (keeps ISA separate from MiA)
+# -----------------------------------------------------------------------------
+[timing]
+reference_pipeline = "5-stage in-order"
+[timing.latency_class]
+alu1   = { cycles = 1 }
+mul    = { cycles = 3 }
+load   = { cycles = 2 }
+store  = { cycles = 1 }
+branch = { cycles = 1, mispredict_penalty = 2 }
+
+
+# -----------------------------------------------------------------------------
+# [verification]  Coverage goals and legality constraints
+# -----------------------------------------------------------------------------
+[verification]
+# Every instruction should be hit with these operand corner cases.
+operand_corners = ["rd_is_x0", "rs1_eq_rs2", "imm_min", "imm_max", "imm_zero"]
+# Encodings that must raise illegal-instruction.
+reserved_encodings = [
+  { name = "all_zeros", pattern = "00000000000000000000000000000000" },
+  { name = "all_ones",  pattern = "11111111111111111111111111111111" },
+]
+# Compliance test sets expected from generators.
+test_suites = ["decode_roundtrip", "per_instruction_directed", "random_instruction_stream"]
+
+
+# -----------------------------------------------------------------------------
+# [generate]  Which artifacts tools should emit from this file
+# -----------------------------------------------------------------------------
+[generate]
+targets = [
+  { kind = "assembler_tables",    out = "gen/asm_tables.json" },
+  { kind = "decoder_rtl",         out = "gen/decoder.sv" },
+  { kind = "iss_decoder",         out = "gen/decode.cpp" },
+  { kind = "manual_instruction_table", out = "gen/insn_table.adoc" },
+  { kind = "compiler_backend_td", out = "gen/Tiny32.td" },
+  { kind = "coverage_points",     out = "gen/cov.sv" },
+]

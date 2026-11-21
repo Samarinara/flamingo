@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ISA Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: editor column on the left with tabs, live TOML + problems pinned on the right. */
+:root {
+  --paper: #eef1f5;
+  --panel: #ffffff;
+  --ink: #111827;
+  --muted: #5b6577;
+  --line: #d5dae3;
+  --accent: #2f4fd6;
+  --accent-ink: #ffffff;
+  --bad: #b42318;
+  --ok: #1a7f4b;
+  --warn: #9a6700;
+  --seg-l: 86%;
+  --seg-ink: #111827;
+  --code-bg: #0f172a;
+  --code-ink: #dbe4f5;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1117; --panel: #161b24; --ink: #e6ebf5; --muted: #98a3b8; --line: #2a3241;
+    --accent: #7b96ff; --accent-ink: #0d1117; --bad: #ff8a80; --ok: #5fd39a; --warn: #e3b341;
+    --seg-l: 26%; --seg-ink: #e6ebf5; --code-bg: #0a0e15; --code-ink: #cfd9ee;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1117; --panel: #161b24; --ink: #e6ebf5; --muted: #98a3b8; --line: #2a3241;
+  --accent: #7b96ff; --accent-ink: #0d1117; --bad: #ff8a80; --ok: #5fd39a; --warn: #e3b341;
+  --seg-l: 26%; --seg-ink: #e6ebf5; --code-bg: #0a0e15; --code-ink: #cfd9ee;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--paper); color: var(--ink); font: 15px/1.5 var(--font-body); }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.wrap { max-width: 1240px; margin: 0 auto; padding: 20px 16px 40px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+header h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 60ch; }
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); gap: 16px; align-items: start; }
+@media (max-width: 920px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.tabs { display: flex; gap: 2px; padding: 6px 6px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tab { border: 0; background: none; padding: 9px 14px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 500; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab .n { font-family: var(--font-mono); font-size: 12px; margin-left: 6px; color: var(--muted); }
+#editor { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-weight: 500; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.small { padding: 3px 9px; font-size: 13px; }
+.btn.danger:hover { border-color: var(--bad); color: var(--bad); }
+
+.row { display: flex; flex-wrap: wrap; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 140px; }
+.field > span { font-size: 12px; color: var(--muted); font-weight: 500; }
+input, select, textarea { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; min-width: 0; }
+input.mono, textarea, .mono { font-family: var(--font-mono); font-size: 13.5px; }
+textarea { resize: vertical; min-height: 64px; }
+
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card-head h3 { font-size: 15px; font-weight: 600; font-family: var(--font-mono); }
+.hint { color: var(--muted); font-size: 13px; margin: 0; }
+
+/* bit layout bar */
+.bar { display: flex; height: 44px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--paper); }
+.seg { min-width: 0; padding: 3px 4px; font-family: var(--font-mono); font-size: 11px; line-height: 1.25; overflow: hidden; display: flex; flex-direction: column; justify-content: center; border-right: 1px solid var(--panel); color: var(--seg-ink); }
+.seg b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seg i { font-style: normal; opacity: .7; white-space: nowrap; }
+.seg.gap { background: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--bad) 30%, transparent) 5px 7px); color: var(--bad); }
+.seg.over { outline: 2px solid var(--bad); outline-offset: -2px; }
+.scale { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: -8px; }
+
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; padding: 0 6px 4px 0; }
+td { padding: 3px 6px 3px 0; vertical-align: middle; }
+.tbl-scroll { overflow-x: auto; }
+td input[type="number"] { width: 64px; }
+td .bits { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+
+/* output */
+.side { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 920px) { .side { position: static; } }
+.out-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); gap: 8px; }
+.out-head h2 { font-size: 14px; font-weight: 600; }
+pre#toml { margin: 0; padding: 12px; background: var(--code-bg); color: var(--code-ink); font: 12.5px/1.55 var(--font-mono); overflow: auto; max-height: 52vh; border-radius: 0 0 8px 8px; tab-size: 2; }
+.status { display: inline-flex; gap: 6px; align-items: center; font-weight: 500; font-size: 13px; }
+.pill { font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.pill.ok { color: var(--ok); } .pill.bad { color: var(--bad); } .pill.warn { color: var(--warn); }
+ul.problems { list-style: none; margin: 0; padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; max-height: 26vh; overflow: auto; }
+ul.problems li { padding-left: 10px; border-left: 3px solid var(--bad); }
+ul.problems li.w { border-left-color: var(--warn); }
+ul.problems li.ok { border-left-color: var(--ok); color: var(--muted); }
+.sr { position: absolute; left: -9999px; }
+@media (prefers-reduced-motion: no-preference) { .btn { transition: border-color .12s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>ISA Builder</h1>
+      <p>Define registers, instruction formats and instructions. The TOML on the right updates as you type and is checked for bit gaps and encoding clashes.</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn" data-act="example" type="button">Load tiny32 example</button>
+      <button class="btn danger" data-act="clear" type="button">Start empty</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="panel" aria-label="Editor">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div id="editor" role="tabpanel"></div>
+    </section>
+
+    <aside class="side">
+      <section class="panel" aria-label="TOML output">
+        <div class="out-head">
+          <h2>isa.toml</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="status" id="status"></span>
+            <button class="btn primary small" id="copy" type="button">Copy TOML</button>
+          </div>
+        </div>
+        <pre id="toml" tabindex="0"></pre>
+      </section>
+      <section class="panel" aria-label="Problems">
+        <div class="out-head"><h2>Checks</h2></div>
+        <ul class="problems" id="problems"></ul>
+      </section>
+    </aside>
+  </div>
+</div>
+<textarea id="clip" class="sr" aria-hidden="true" tabindex="-1"></textarea>
+
+<script>
+"use strict";
+/* ---------- state ---------- */
+const example = () => ({
+  name: "tiny32", version: "0.1.0", description: "Small 32-bit load/store ISA.",
+  width: 32, endianness: "little",
+  regfiles: [{ name: "X", count: 32, width: 32, zero: 0 }],
+  formats: [
+    { name: "R", fields: [
+      { name: "funct7", hi: 31, lo: 25 }, { name: "rs2", hi: 24, lo: 20 }, { name: "rs1", hi: 19, lo: 15 },
+      { name: "funct3", hi: 14, lo: 12 }, { name: "rd", hi: 11, lo: 7 }, { name: "opcode", hi: 6, lo: 0 }] },
+    { name: "I", fields: [
+      { name: "imm12", hi: 31, lo: 20 }, { name: "rs1", hi: 19, lo: 15 },
+      { name: "funct3", hi: 14, lo: 12 }, { name: "rd", hi: 11, lo: 7 }, { name: "opcode", hi: 6, lo: 0 }] },
+  ],
+  instructions: [
+    ins("add", "R", { opcode: "0110011", funct3: "000", funct7: "0000000" }, "add {rd}, {rs1}, {rs2}", "X[rd] = X[rs1] + X[rs2]"),
+    ins("sub", "R", { opcode: "0110011", funct3: "000", funct7: "0100000" }, "sub {rd}, {rs1}, {rs2}", "X[rd] = X[rs1] - X[rs2]"),
+    ins("addi", "I", { opcode: "0010011", funct3: "000" }, "addi {rd}, {rs1}, {imm12}", "X[rd] = X[rs1] + sext(imm12, 12)"),
+    ins("lw", "I", { opcode: "0000011", funct3: "010" }, "lw {rd}, {imm12}({rs1})", "X[rd] = mem_read(X[rs1] + sext(imm12, 12), 4)"),
+  ],
+});
+function ins(name, format, fixed, assembly, semantics) {
+  const f = {};
+  Object.keys(fixed).forEach(k => f[k] = { m: "fixed", v: fixed[k] });
+  return { name, format, assembly, semantics, f };
+}
+const empty = () => ({ name: "my_isa", version: "0.1.0", description: "", width: 32, endianness: "little",
+  regfiles: [], formats: [], instructions: [] });
+
+let S, tab = "arch";
+try { const d = localStorage.getItem("isa-builder-draft"); S = d ? JSON.parse(d) : example(); } catch (e) { S = example(); }
+if (!S || !Array.isArray(S.formats)) S = example();
+const save = () => { try { localStorage.setItem("isa-builder-draft", JSON.stringify(S)); } catch (e) {} };
+
+/* ---------- helpers ---------- */
+const A = s => String(s ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+const $ = id => document.getElementById(id);
+const inp = (path, val, cls = "", extra = "") => `<input class="${cls}" data-bind="${path}" value="${A(val)}" ${extra}>`;
+const numInp = (path, val, extra = "") => `<input type="number" data-bind="${path}" data-num="1" value="${A(val)}" ${extra}>`;
+function setPath(p, v) { const k = p.split("."); let o = S; for (let i = 0; i < k.length - 1; i++) o = o[k[i]]; o[k[k.length - 1]] = v; }
+const fmtOf = name => S.formats.find(f => f.name === name);
+function ensureFields(ins) {
+  const fm = fmtOf(ins.format); ins.f = ins.f || {};
+  if (!fm) return [];
+  const names = fm.fields.map(x => x.name);
+  names.forEach(n => { if (!ins.f[n]) ins.f[n] = { m: "op", v: "" }; });
+  Object.keys(ins.f).forEach(k => { if (!names.includes(k)) delete ins.f[k]; });
+  return [...fm.fields].sort((a, b) => b.hi - a.hi);
+}
+const lg2 = n => Math.max(1, Math.ceil(Math.log2(Math.max(2, n))));
+
+/* ---------- validation ---------- */
+function validate() {
+  const E = [], Wn = [], W = S.width;
+  if (!/^[a-z][a-z0-9_]*$/.test(S.name)) E.push("ISA name must be lowercase letters, digits and underscores, starting with a letter.");
+  const dup = (arr, what) => { const s = new Set(); arr.forEach(n => { if (!n) E.push(`A ${what} has no name.`); else if (s.has(n)) E.push(`Duplicate ${what} name "${n}".`); s.add(n); }); };
+  dup(S.regfiles.map(r => r.name), "register file"); dup(S.formats.map(f => f.name), "format"); dup(S.instructions.map(i => i.name), "instruction");
+  S.regfiles.forEach(r => { if (r.count < 1 || r.count > 4096) E.push(`Register file ${r.name}: count must be 1 to 4096.`); if (r.zero !== "" && r.zero != null && (r.zero < 0 || r.zero >= r.count)) E.push(`Register file ${r.name}: zero register index is out of range.`); });
+  S.formats.forEach(fm => {
+    dup(fm.fields.map(f => f.name), `field in format ${fm.name}`);
+    const cover = Array(W).fill(null); let bad = false;
+    fm.fields.forEach(f => {
+      if (!(f.hi >= f.lo && f.lo >= 0 && f.hi < W)) { E.push(`Format ${fm.name}, field ${f.name}: bits [${f.hi}:${f.lo}] are outside 0..${W - 1}.`); bad = true; return; }
+      for (let b = f.lo; b <= f.hi; b++) { if (cover[b]) { E.push(`Format ${fm.name}: bit ${b} belongs to both ${cover[b]} and ${f.name}.`); bad = true; } cover[b] = f.name; }
+    });
+    if (!bad) { const gaps = cover.map((c, i) => c ? null : i).filter(x => x !== null); if (gaps.length) E.push(`Format ${fm.name}: bits ${rangeText(gaps)} belong to no field.`); }
+    if (!fm.fields.length) E.push(`Format ${fm.name} has no fields.`);
+  });
+  const enc = [];
+  S.instructions.forEach(it => {
+    const fm = fmtOf(it.format);
+    if (!fm) { E.push(`Instruction ${it.name}: choose a format.`); return; }
+    ensureFields(it);
+    let match = 0n, mask = 0n, ok = true, fixedCount = 0; const ops = [];
+    fm.fields.forEach(f => {
+      const c = it.f[f.name], w = f.hi - f.lo + 1;
+      if (c.m === "op") { ops.push(f.name); return; }
+      fixedCount++;
+      if (!/^[01]+$/.test(c.v) || c.v.length !== w) { E.push(`Instruction ${it.name}: fixed value for ${f.name} needs exactly ${w} binary digit${w > 1 ? "s" : ""}.`); ok = false; return; }
+      if (f.hi < f.lo || f.hi >= 64) { ok = false; return; }
+      mask |= ((1n << BigInt(w)) - 1n) << BigInt(f.lo); match |= BigInt("0b" + c.v) << BigInt(f.lo);
+    });
+    if (!fixedCount) Wn.push(`Instruction ${it.name} has no fixed fields, so it matches every word.`);
+    const used = [...(it.assembly || "").matchAll(/\{(\w+)\}/g)].map(m => m[1]);
+    used.forEach(u => { if (!ops.includes(u)) E.push(`Instruction ${it.name}: assembly uses {${u}}, which is not an operand field.`); });
+    ops.forEach(o => { if (!used.includes(o)) Wn.push(`Instruction ${it.name}: operand ${o} does not appear in the assembly template.`); });
+    if (!(it.assembly || "").trim()) Wn.push(`Instruction ${it.name} has no assembly template.`);
+    if (ok) enc.push([it.name, match, mask]);
+  });
+  for (let i = 0; i < enc.length; i++) for (let j = i + 1; j < enc.length; j++) {
+    const [a, ma, ka] = enc[i], [b, mb, kb] = enc[j];
+    if (((ma ^ mb) & ka & kb) === 0n) E.push(`Encodings of ${a} and ${b} overlap: some words match both.`);
+  }
+  if (!S.instructions.length) Wn.push("No instructions yet.");
+  return { E, Wn };
+}
+function rangeText(a) {
+  const out = []; let s = a[0], p = a[0];
+  for (let i = 1; i <= a.length; i++) { if (a[i] !== p + 1) { out.push(s === p ? `${s}` : `${p}:${s}`); s = a[i]; } p = a[i]; }
+  return out.join(", ");
+}
+
+/* ---------- TOML ---------- */
+const q = s => JSON.stringify(String(s ?? ""));
+const key = k => /^[A-Za-z0-9_-]+$/.test(k) ? k : q(k);
+const ml = s => `"""\n${String(s).replace(/\\/g, "\\\\").replace(/"""/g, '\\"""')}\n"""`;
+function toml() {
+  const L = [];
+  L.push("[meta]", `schema_version = "0.1"`, `name = ${q(S.name)}`, `version = ${q(S.version)}`, `description = ${q(S.description)}`, "");
+  L.push("[isa]", `xlen = ${S.regfiles[0] ? S.regfiles[0].width : S.width}`, `endianness = ${q(S.endianness)}`, `instruction_width = "fixed"`, `instruction_bits = ${S.width}`, "");
+  S.regfiles.forEach(r => {
+    L.push("[[register_file]]", `name = ${q(r.name)}`, `count = ${r.count}`, `width = ${r.width}`, `index_bits = ${lg2(r.count)}`);
+    if (r.zero !== "" && r.zero != null) L.push(`zero_register = ${r.zero}`);
+    L.push("");
+  });
+  S.formats.forEach(fm => {
+    L.push("[[format]]", `name = ${q(fm.name)}`, `width = ${S.width}`);
+    [...fm.fields].sort((a, b) => b.hi - a.hi).forEach(f => L.push("  [[format.field]]", `  name = ${q(f.name)}`, `  bits = [${f.hi}, ${f.lo}]`));
+    L.push("");
+  });
+  const file = S.regfiles[0] ? S.regfiles[0].name : "X";
+  S.instructions.forEach(it => {
+    const fm = fmtOf(it.format); if (!fm) return;
+    const fields = ensureFields(it);
+    const fixed = fields.filter(f => it.f[f.name].m === "fixed").map(f => `${key(f.name)} = ${q(it.f[f.name].v)}`);
+    const ops = fields.filter(f => it.f[f.name].m === "op").map(f => /^imm/.test(f.name)
+      ? `  { name = ${q(f.name)}, kind = "imm" },` : `  { name = ${q(f.name)}, kind = "reg", file = ${q(file)} },`);
+    L.push("[[instruction]]", `name = ${q(it.name)}`, `format = ${q(it.format)}`, `encoding.fixed = { ${fixed.join(", ")} }`);
+    if (ops.length) L.push("operands = [", ...ops, "]");
+    L.push(`assembly = ${q(it.assembly)}`);
+    if ((it.semantics || "").trim()) L.push(`semantics = ${/\n/.test(it.semantics) ? ml(it.semantics.trim()) : q(it.semantics)}`);
+    L.push("");
+  });
+  return L.join("\n").replace(/\n+$/, "\n");
+}
+
+/* ---------- bit bar ---------- */
+function barHTML(fm) {
+  const W = S.width, fs = [...fm.fields].filter(f => f.hi >= f.lo && f.lo >= 0 && f.hi < W).sort((a, b) => b.hi - a.hi);
+  let cur = W - 1, out = "", idx = 0;
+  const seg = (w, cls, name, rng, hue) => `<div class="seg ${cls}" style="flex:${w} 1 0;${hue != null ? `background:hsl(${hue} 55% var(--seg-l))` : ""}" title="${A(name)} ${rng}"><b>${A(name)}</b><i>${rng}</i></div>`;
+  fs.forEach(f => {
+    if (f.hi < cur) out += seg(cur - f.hi, "gap", "unused", `[${cur}:${f.hi + 1}]`);
+    const over = f.hi > cur;
+    out += seg(f.hi - f.lo + 1, over ? "over" : "", f.name, `[${f.hi}:${f.lo}]`, (idx * 47 + 210) % 360);
+    cur = Math.min(cur, f.lo - 1); idx++;
+  });
+  if (cur >= 0) out += seg(cur + 1, "gap", "unused", `[${cur}:0]`);
+  return out || seg(W, "gap", "no fields", `[${W - 1}:0]`);
+}
+function updateBars() { document.querySelectorAll(".bar[data-fmt]").forEach(el => { const fm = S.formats[+el.dataset.fmt]; if (fm) el.innerHTML = barHTML(fm); }); }
+
+/* ---------- editor ---------- */
+const TABS = [["arch", "Architecture"], ["regs", "Registers"], ["fmts", "Formats"], ["ins", "Instructions"]];
+function renderTabs() {
+  const counts = { arch: "", regs: S.regfiles.length, fmts: S.formats.length, ins: S.instructions.length };
+  $("tabs").innerHTML = TABS.map(([id, label]) => `<button class="tab" role="tab" type="button" data-tab="${id}" aria-selected="${tab === id}">${label}${counts[id] !== "" ? `<span class="n">${counts[id]}</span>` : ""}</button>`).join("");
+}
+function renderEditor() {
+  renderTabs();
+  const ed = $("editor");
+  if (tab === "arch") ed.innerHTML = `
+    <div class="row">
+      <label class="field"><span>ISA name</span>${inp("name", S.name, "mono", 'data-san="id"')}</label>
+      <label class="field"><span>Version</span>${inp("version", S.version, "mono")}</label>
+    </div>
+    <label class="field"><span>Description</span>${inp("description", S.description)}</label>
+    <div class="row">
+      <label class="field"><span>Instruction width (bits)</span>
+        <select data-bind="width" data-num="1" data-re="1">${[16, 32, 48, 64].map(w => `<option ${w === S.width ? "selected" : ""}>${w}</option>`).join("")}</select></label>
+      <label class="field"><span>Byte order</span>
+        <select data-bind="endianness">${["little", "big", "bi"].map(w => `<option ${w === S.endianness ? "selected" : ""}>${w}</option>`).join("")}</select></label>
+    </div>
+    <p class="hint">Fixed-width encoding only. All formats share this width. Variable-length encodings need hand edits to the TOML.</p>`;
+  if (tab === "regs") ed.innerHTML = S.regfiles.map((r, i) => `
+    <div class="card">
+      <div class="card-head"><h3>${A(r.name || "register file")}</h3><button class="btn small danger" data-act="del-reg" data-i="${i}" type="button">Remove</button></div>
+      <div class="row">
+        <label class="field"><span>Name</span>${inp(`regfiles.${i}.name`, r.name, "mono", 'data-san="id"')}</label>
+        <label class="field"><span>Count</span>${numInp(`regfiles.${i}.count`, r.count, 'min="1" max="4096"')}</label>
+        <label class="field"><span>Width (bits)</span>${numInp(`regfiles.${i}.width`, r.width, 'min="1" max="1024"')}</label>
+        <label class="field"><span>Zero register index</span>${numInp(`regfiles.${i}.zero`, r.zero ?? "", 'min="0" placeholder="none"')}</label>
+      </div>
+    </div>`).join("") + `<div><button class="btn" data-act="add-reg" type="button">Add register file</button></div>`;
+  if (tab === "fmts") ed.innerHTML = (S.formats.length ? "" : `<p class="hint">A format splits the ${S.width}-bit instruction word into named fields. Add one to begin.</p>`) + S.formats.map((fm, i) => `
+    <div class="card">
+      <div class="card-head"><h3>Format ${A(fm.name)}</h3><button class="btn small danger" data-act="del-fmt" data-i="${i}" type="button">Remove</button></div>
+      <label class="field" style="max-width:200px"><span>Name</span>${inp(`formats.${i}.name`, fm.name, "mono", 'data-san="id" data-rename="fmt"')}</label>
+      <div class="bar" data-fmt="${i}"></div>
+      <div class="scale"><span>${S.width - 1}</span><span>0</span></div>
+      <div class="tbl-scroll"><table>
+        <thead><tr><th>Field</th><th>High bit</th><th>Low bit</th><th></th></tr></thead>
+        <tbody>${fm.fields.map((f, j) => `<tr>
+          <td>${inp(`formats.${i}.fields.${j}.name`, f.name, "mono", 'data-san="id" style="min-width:110px"')}</td>
+          <td>${numInp(`formats.${i}.fields.${j}.hi`, f.hi, `min="0" max="${S.width - 1}" data-bar="1"`)}</td>
+          <td>${numInp(`formats.${i}.fields.${j}.lo`, f.lo, `min="0" max="${S.width - 1}" data-bar="1"`)}</td>
+          <td><button class="btn small danger" data-act="del-field" data-i="${i}" data-j="${j}" type="button" aria-label="Remove field ${A(f.name)}">×</button></td></tr>`).join("")}</tbody>
+      </table></div>
+      <div><button class="btn small" data-act="add-field" data-i="${i}" type="button">Add field</button></div>
+    </div>`).join("") + `<div><button class="btn" data-act="add-fmt" type="button">Add format</button></div>`;
+  if (tab === "ins") ed.innerHTML = (S.formats.length ? "" : `<p class="hint">Define a format first, then instructions can use it.</p>`) + S.instructions.map((it, i) => {
+    const fields = ensureFields(it);
+    return `<div class="card">
+      <div class="card-head"><h3>${A(it.name || "instruction")}</h3><button class="btn small danger" data-act="del-ins" data-i="${i}" type="button">Remove</button></div>
+      <div class="row">
+        <label class="field"><span>Mnemonic</span>${inp(`instructions.${i}.name`, it.name, "mono", 'data-san="id"')}</label>
+        <label class="field"><span>Format</span><select data-bind="instructions.${i}.format" data-re="1" data-fmtsel="${i}">
+          <option value="">choose…</option>${S.formats.map(f => `<option ${f.name === it.format ? "selected" : ""}>${A(f.name)}</option>`).join("")}</select></label>
+      </div>
+      ${fields.length ? `<div class="tbl-scroll"><table>
+        <thead><tr><th>Field</th><th>Bits</th><th>Role</th><th>Fixed value</th></tr></thead>
+        <tbody>${fields.map(f => { const c = it.f[f.name], w = f.hi - f.lo + 1; return `<tr>
+          <td class="mono">${A(f.name)}</td><td class="bits">[${f.hi}:${f.lo}]</td>
+          <td><select data-bind="instructions.${i}.f.${f.name}.m" data-re="1"><option value="fixed" ${c.m === "fixed" ? "selected" : ""}>fixed</option><option value="op" ${c.m === "op" ? "selected" : ""}>operand</option></select></td>
+          <td>${c.m === "fixed" ? inp(`instructions.${i}.f.${f.name}.v`, c.v, "mono", `data-san="bin" maxlength="${w}" placeholder="${"0".repeat(Math.min(w, 32))}" style="min-width:${Math.min(w, 32) + 4}ch"`) : `<span class="hint">{${A(f.name)}}</span>`}</td></tr>`; }).join("")}</tbody></table></div>` : ""}
+      <label class="field"><span>Assembly template (use {field} for operands)</span>${inp(`instructions.${i}.assembly`, it.assembly, "mono")}</label>
+      <label class="field"><span>Semantics (pseudocode)</span><textarea class="mono" data-bind="instructions.${i}.semantics" rows="3">${A(it.semantics)}</textarea></label>
+    </div>`; }).join("") + `<div><button class="btn" data-act="add-ins" type="button" ${S.formats.length ? "" : "disabled"}>Add instruction</button></div>`;
+  updateBars();
+}
+
+function refresh() {
+  const { E, Wn } = validate();
+  $("toml").textContent = toml();
+  $("status").innerHTML = `<span class="pill ${E.length ? "bad" : "ok"}">${E.length} error${E.length === 1 ? "" : "s"}</span>` + (Wn.length ? `<span class="pill warn">${Wn.length} warning${Wn.length === 1 ? "" : "s"}</span>` : "");
+  $("problems").innerHTML = (E.length || Wn.length) ? E.map(m => `<li>${A(m)}</li>`).join("") + Wn.map(m => `<li class="w">${A(m)}</li>`).join("")
+    : `<li class="ok">Formats cover every bit and no two encodings overlap.</li>`;
+  save();
+}
+
+/* ---------- events ---------- */
+const san = { id: v => v.toLowerCase().replace(/[^a-z0-9_]/g, "_"), bin: v => v.replace(/[^01]/g, "") };
+document.addEventListener("input", e => {
+  const t = e.target, p = t.dataset && t.dataset.bind; if (!p) return;
+  let v = t.value;
+  if (t.dataset.san) { const s = san[t.dataset.san](v); if (s !== v) { const pos = t.selectionStart; t.value = s; try { t.setSelectionRange(pos, pos); } catch (x) {} } v = s; }
+  if (t.dataset.rename === "fmt") renameFormat(p, v);
+  if (t.dataset.num) v = t.value === "" ? "" : Number(t.value);
+  if (t.tagName === "SELECT" && t.dataset.re) return;
+  setPath(p, v);
+  if (t.dataset.bar) updateBars();
+  refresh();
+});
+function renameFormat(p, newName) { const i = +p.split(".")[1], old = S.formats[i].name; S.instructions.forEach(it => { if (it.format === old) it.format = newName; }); }
+document.addEventListener("change", e => {
+  const t = e.target, p = t.dataset && t.dataset.bind; if (!p || !t.dataset.re) return;
+  let v = t.value; if (t.dataset.num) v = Number(v);
+  setPath(p, v);
+  if (t.dataset.fmtsel !== undefined) S.instructions[+t.dataset.fmtsel].f = {};
+  if (p === "width") S.formats.forEach(fm => fm.fields.forEach(f => { f.hi = Math.min(f.hi, v - 1); f.lo = Math.min(f.lo, v - 1); }));
+  renderEditor(); refresh();
+});
+document.addEventListener("click", e => {
+  const tb = e.target.closest("[data-tab]"); if (tb) { tab = tb.dataset.tab; renderEditor(); return; }
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const i = +b.dataset.i, j = +b.dataset.j, W = S.width;
+  switch (b.dataset.act) {
+    case "example": S = example(); break;
+    case "clear": S = empty(); tab = "arch"; break;
+    case "add-reg": S.regfiles.push({ name: S.regfiles.length ? "F" : "X", count: 32, width: 32, zero: "" }); break;
+    case "del-reg": S.regfiles.splice(i, 1); break;
+    case "add-fmt": S.formats.push({ name: "F" + (S.formats.length + 1), fields: [{ name: "payload", hi: W - 1, lo: 7 }, { name: "opcode", hi: 6, lo: 0 }] }); break;
+    case "del-fmt": { const n = S.formats[i].name; S.formats.splice(i, 1); S.instructions.forEach(x => { if (x.format === n) { x.format = ""; x.f = {}; } }); break; }
+    case "add-field": S.formats[i].fields.push({ name: "field" + (S.formats[i].fields.length + 1), hi: 0, lo: 0 }); break;
+    case "del-field": S.formats[i].fields.splice(j, 1); break;
+    case "add-ins": S.instructions.push({ name: "op" + (S.instructions.length + 1), format: S.formats[0].name, assembly: "", semantics: "", f: {} }); break;
+    case "del-ins": S.instructions.splice(i, 1); break;
+  }
+  renderEditor(); refresh();
+});
+$("copy").addEventListener("click", async () => {
+  const text = $("toml").textContent, btn = $("copy");
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {}
+  if (!ok) { const c = $("clip"); c.value = text; c.select(); try { ok = document.execCommand("copy"); } catch (e) {} }
+  btn.textContent = ok ? "Copied" : "Select the text and copy";
+  setTimeout(() => btn.textContent = "Copy TOML", 1600);
+});
+
+renderEditor(); refresh();
+</script>
+</body>
+</html>
