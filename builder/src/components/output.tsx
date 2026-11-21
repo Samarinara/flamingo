@@ -57,7 +57,7 @@ export function TomlPanel({ text, problems }: { text: string; problems: Problems
           </Button>
         </CardAction>
       </CardHeader>
-      <pre tabIndex={0} className="code-block max-h-[52vh] overflow-auto p-3 font-mono text-[12.5px] leading-relaxed [tab-size:2]">
+      <pre tabIndex={0} className="code-block max-h-[52vh] overflow-auto px-5 pt-4 pb-6 font-mono text-[12.5px] leading-relaxed [tab-size:2]">
         {text}
       </pre>
       <textarea ref={clip} aria-hidden="true" tabIndex={-1} className="sr-only" readOnly />
@@ -77,12 +77,12 @@ export function ChecksPanel({ problems }: { problems: Problems }) {
         <ul className="flex max-h-[26vh] flex-col gap-1.5 overflow-auto text-sm">
           {items.length ? (
             items.map(({ m, kind }, i) => (
-              <li key={i} className={cn("border-l-3 pl-2.5", kind === "error" ? "border-destructive" : "border-warn")}>
+              <li key={i} className={cn("rounded-2xl px-3 py-1", kind === "error" ? "bg-destructive/10 text-destructive" : "bg-warn/12 text-foreground")}>
                 {m}
               </li>
             ))
           ) : (
-            <li className="border-l-3 border-ok pl-2.5 text-muted-foreground">Formats cover every bit and no two encodings overlap.</li>
+            <li className="rounded-2xl bg-ok/12 px-3 py-1 text-muted-foreground">Formats cover every bit and no two encodings overlap.</li>
           )}
         </ul>
       </CardContent>
